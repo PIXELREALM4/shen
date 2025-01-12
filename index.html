@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Solana Memecoin Presale</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="https://bundle.run/buffer@6.0.3"></script>
+    <script src="https://unpkg.com/@solana/web3.js@latest/lib/index.iife.min.js"></script>
+    <script src="https://unpkg.com/@solana/spl-token@0.3.8/lib/index.iife.min.js"></script>
+
+</head>
+<body>
+    <div class="container">
+        <h1>$SHEN Presale</h1>
+        <p>Token Price: <strong>0.1 SOL / 0.001 USDT</strong></p>
+        <input type="number" id="amount" placeholder="Enter amount" min="0.1" step="0.001" />
+        <select id="currency">
+            <option value="SOL">SOL</option>
+            <option value="USDT">USDT</option>
+        </select>
+        <p id="tokenAmount">Tokens to receive: 0</p>
+        <button id="connectBtn" class="wallet-btn">Connect Wallet</button>
+        <button id="buyBtn" disabled>Buy Tokens</button>
+        <p id="status" class="error"></p>
+        <div class="progress-container">
+            <div id="progress-bar" class="progress-bar"></div>
+        </div>
+        <p id="progress-text">0 / 100,000,000 Tokens Sold</p>
+    </div>
+
+    <script>
+        const Buffer = buffer.Buffer;
+
+        const NETWORK = 'mainnet-beta';
+        const USDT_MINT = 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB'; // Mainnet USDT
+        const PRESALE_WALLET = '4WgAa17caXsei1y6r9WiZNPFNQutYcwdA8aY6XbtMt61';
+        const PRESALE_OWNER = '4WgAa17caXsei1y6r9WiZNPFNQutYcwdA8aY6XbtMt61'; // Replace with your wallet address
+
+        let connectedWallet = null;
+        let selectedWallet = null;
+        let connection = new solanaWeb3.Connection(
+            'https://mainnet.helius-rpc.com/?api-key=3239de5f-59fb-4a23-9466-c669e3b00f4d',
+            'confirmed'
+        );
+
+        const API_URL = 'http://localhost:3000'; // Match your server port
+
+        const TOKEN_PRICE_SOL = 0.000005;  // Price in SOL
+        const TOKEN_PRICE_USDT = 0.001;    // Price in USDT
+
+        const PRESALE_CONTRACT_ADDRESS = '7JbxJ18bF84y74e7b5PwNtvKJVqwLFbdPZi7kbxHDRPF';
+        const PRESALE_CONTRACT_ABI = [
+            {
+                "inputs": [],
+                "name": "buyWithSOL",
+                "outputs": [],
+                "stateMutability": "payable",
+                "type": "function"
+            },
+            {
+                "inputs": [{"type": "uint256", "name": "amount"}],
+                "name": "buyWithUSDT",
+                "outputs": [],
+                "stateMutability": "nonpayable",
+                "type": "function"
+            }
+        ];
+
+        const PROGRAM_ID = 'B2uf99g3cmgfAEKoXcLLFmJWqutUnzH8JVrZbnxek6wi';
+        const TOKEN_MINT = '7JbxJ18bF84y74e7b5PwNtvKJVqwLFbdPZi7kbxHDRPF';
+
+        const TOKEN_PROGRAM_ID = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
+        const USDT_VAULT = 'YOUR_USDT_VAULT_ADDRESS'; // Add your USDT vault a;ltr[phgpddress here
+
+        let totalTokensSold = 0; // Initialize total tokens sold
+
+        window.onload = function() {
+            detectWallets();
+            setupEventListeners();
+            document.getElementById('status').innerText = 'Ready to connect wallet';
+        };
+
+        function setupEventListeners() {
+            document.getElementById('connectBtn').addEventListener('click', handleWalletConnection);
+            document.getElementById('buyBtn').addEventListener('click', handlePurchase);
+            document.getElementById('amount').addEventListener('input', updateTokenAmount);
+            document.getElementById('currency').addEventListener('change', updateTokenAmount);
+        }
+
+        function detectWallets() {
+            const phantom = window.solana;
+            const solflare = window.solflare;
+
+            if (!phantom && !solflare) {
+                document.getElementById('status').innerText = 
+                    'No Solana wallet found. Please install Phantom or Solflare.';
+                document.getElementById('connectBtn').disabled = true;
+            }
+        }
+
+        async function handleWalletConnection() {
+            try {
+                const phantom = window.solana;
+                const solflare = window.solflare;
+                const statusElement = document.getElementById('status');
+
+                if (phantom && solflare) {
+                    // Create wallet selection modal
+                    const modal = document.createElement('div');
+                    modal.style.cssText = `
+                        position: fixed;
+                        top: 0;
+                        left: 0;
+                        width: 100%;
+                        height: 100%;
+                        background: rgba(0, 0, 0, 0.5);
+                        display: flex;
+                        justify-content: center;
+                        align-items: center;
+                        z-index: 1000;
+                    `;
+
+                    const modalContent = document.createElement('div');
+                    modalContent.style.cssText = `
+                        background: white;
+                        padding: 20px;
+                        border-radius: 8px;
+                        text-align: center;
+                        max-width: 300px;
+                        width: 90%;
+                    `;
+
+                    modalContent.innerHTML = `
+                        <h3 style="margin-top: 0;">Select Wallet</h3>
+                        <button id="phantomSelect" style="
+                            width: 100%;
+                            padding: 10px;
+                            margin: 5px 0;
+                            border: 1px solid #ddd;
+                            border-radius: 5px;
+                            background: #AB9FF2;
+                            color: white;
+                            cursor: pointer;
+                        ">Phantom</button>
+                        <button id="solflareSelect" style="
+                            width: 100%;
+                            padding: 10px;
+                            margin: 5px 0;
+                            border: 1px solid #ddd;
+                            border-radius: 5px;
+                            background: #FC822B;
+                            color: white;
+                            cursor: pointer;
+                        ">Solflare</button>
+                    `;
+
+                    modal.appendChild(modalContent);
+                    document.body.appendChild(modal);
+
+                    // Handle wallet selection
+                    document.getElementById('phantomSelect').onclick = async () => {
+                        document.body.removeChild(modal);
+                        selectedWallet = phantom;
+                        await connectWallet();
+                    };
+
+                    document.getElementById('solflareSelect').onclick = async () => {
+                        document.body.removeChild(modal);
+                        selectedWallet = solflare;
+                        await connectWallet();
+                    };
+
+                } else if (phantom) {
+                    selectedWallet = phantom;
+                    await connectWallet();
+                } else if (solflare) {
+                    selectedWallet = solflare;
+                    await connectWallet();
+                } else {
+                    throw new Error('No wallet detected. Please install Phantom or Solflare.');
+                }
+            } catch (error) {
+                console.error('Connection error:', error);
+                document.getElementById('status').innerText = 'Failed to connect: ' + error.message;
+            }
+        }
+
+        async function connectWallet() {
+            try {
+                if (!selectedWallet.isConnected) {
+                    await selectedWallet.connect();
+                }
+                connectedWallet = selectedWallet.publicKey.toString();
+                document.getElementById('status').innerText = 
+                    `Connected: ${connectedWallet.slice(0, 4)}...${connectedWallet.slice(-4)}`;
+                document.getElementById('buyBtn').disabled = false;
+                document.getElementById('connectBtn').style.display = 'none';
+            } catch (error) {
+                console.error('Wallet connection error:', error);
+                throw new Error('Failed to connect wallet: ' + error.message);
+            }
+        }
+
+        async function handlePurchase() {
+            try {
+                const amount = parseFloat(document.getElementById('amount').value);
+                const currency = document.getElementById('currency').value;
+                const statusElement = document.getElementById('status');
+                
+                statusElement.innerText = 'Processing transaction...';
+
+                // Validate amount
+                if (!validateAmount(amount, currency)) {
+                    throw new Error(`Invalid amount. Must be between ${currency === 'SOL' ? '0.1 and 10 SOL' : '0.001 and 10,000 USDT'}`);
+                }
+
+                // Get buyer's token account first
+                const buyerTokenAccount = await getOrCreateAssociatedTokenAccount(
+                    TOKEN_MINT,  // Token they're buying
+                    selectedWallet.publicKey.toString()
+                );
+
+                // If paying with USDT, get the buyer's USDT token account
+                let buyerUsdtAccount;
+                if (currency === 'USDT') {
+                    buyerUsdtAccount = await getOrCreateAssociatedTokenAccount(
+                        USDT_MINT,  // USDT token mint
+                        selectedWallet.publicKey.toString()
+                    );
+                }
+
+                const transaction = new solanaWeb3.Transaction();
+
+                if (currency === 'USDT') {
+                    // Add USDT transfer instruction
+                    const transferInstruction = new solanaWeb3.TransactionInstruction({
+                        programId: new solanaWeb3.PublicKey(TOKEN_PROGRAM_ID),
+                        keys: [
+                            { pubkey: new solanaWeb3.PublicKey(buyerUsdtAccount), isSigner: false, isWritable: true }, // from
+                            { pubkey: new solanaWeb3.PublicKey(USDT_VAULT), isSigner: false, isWritable: true }, // to
+                            { pubkey: selectedWallet.publicKey, isSigner: true, isWritable: false }, // owner
+                        ],
+                        data: Buffer.from([3, ...new Uint8Array(Buffer.from((amount * 1e6).toString(16).padStart(16, '0'), 'hex')).reverse()]) // 3 is for Token transfer instruction
+                    });
+                    transaction.add(transferInstruction);
+                }
+
+                // Add presale instruction
+                const presaleInstruction = new solanaWeb3.TransactionInstruction({
+                    programId: new solanaWeb3.PublicKey(PROGRAM_ID),
+                    keys: currency === 'SOL' ? [
+                        { pubkey: selectedWallet.publicKey, isSigner: true, isWritable: true },
+                        { pubkey: new solanaWeb3.PublicKey(PRESALE_OWNER), isSigner: false, isWritable: true },
+                        { pubkey: new solanaWeb3.PublicKey(TOKEN_MINT), isSigner: false, isWritable: true },
+                        { pubkey: new solanaWeb3.PublicKey(buyerTokenAccount), isSigner: false, isWritable: true },
+                        { pubkey: solanaWeb3.TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+                        { pubkey: solanaWeb3.SystemProgram.programId, isSigner: false, isWritable: false },
+                    ] : [
+                        { pubkey: selectedWallet.publicKey, isSigner: true, isWritable: true },
+                        { pubkey: new solanaWeb3.PublicKey(PRESALE_OWNER), isSigner: false, isWritable: true },
+                        { pubkey: new solanaWeb3.PublicKey(TOKEN_MINT), isSigner: false, isWritable: true },
+                        { pubkey: new solanaWeb3.PublicKey(buyerTokenAccount), isSigner: false, isWritable: true },
+                        { pubkey: new solanaWeb3.PublicKey(USDT_VAULT), isSigner: false, isWritable: true },
+                        { pubkey: solanaWeb3.TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+                    ],
+                    data: Buffer.from([
+                        currency === 'SOL' ? 0 : 1, // Instruction discriminator
+                        ...new Uint8Array(Buffer.from((amount * (currency === 'SOL' ? 1e9 : 1e6)).toString(16).padStart(16, '0'), 'hex')).reverse()
+                    ])
+                });
+                transaction.add(presaleInstruction);
+
+                // Get the latest blockhash
+                const { blockhash } = await connection.getRecentBlockhash();
+                transaction.recentBlockhash = blockhash;
+                transaction.feePayer = selectedWallet.publicKey;
+                
+                const signedTransaction = await selectedWallet.signTransaction(transaction);
+                const signature = await connection.sendRawTransaction(signedTransaction.serialize());
+                await connection.confirmTransaction(signature);
+                
+                statusElement.innerHTML = `Transaction successful! <br>
+                    <a href="https://explorer.solana.com/tx/${signature}?cluster=devnet" target="_blank">View on Explorer</a>`;
+
+                // Update total tokens sold
+                totalTokensSold += tokenAmount; // Add the number of tokens bought
+                await updateProgressBar();
+
+            } catch (error) {
+                console.error('Purchase error:', error);
+                document.getElementById('status').innerText = 'Transaction failed: ' + error.message;
+            }
+        }
+
+        async function getOrCreateAssociatedTokenAccount(mintAddress, ownerAddress) {
+            try {
+                // Create PublicKey objects
+                const SPL_ASSOCIATED_TOKEN_ACCOUNT_PROGRAM_ID = new solanaWeb3.PublicKey(
+                    'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL'
+                );
+                const TOKEN_PROGRAM_ID = new solanaWeb3.PublicKey(
+                    'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA'
+                );
+
+                const mintPubKey = new solanaWeb3.PublicKey(mintAddress);
+                const ownerPubKey = new solanaWeb3.PublicKey(ownerAddress);
+
+                // Get the ATA address
+                const [associatedTokenAddress] = await solanaWeb3.PublicKey.findProgramAddress(
+                    [
+                        ownerPubKey.toBuffer(),
+                        TOKEN_PROGRAM_ID.toBuffer(),
+                        mintPubKey.toBuffer(),
+                    ],
+                    SPL_ASSOCIATED_TOKEN_ACCOUNT_PROGRAM_ID
+                );
+
+                // Check if the account exists
+                const account = await connection.getAccountInfo(associatedTokenAddress);
+                
+                if (!account) {
+                    // Create the instruction to create ATA
+                    const createATAInstruction = new solanaWeb3.TransactionInstruction({
+                        keys: [
+                            { pubkey: selectedWallet.publicKey, isSigner: true, isWritable: true }, // payer
+                            { pubkey: associatedTokenAddress, isSigner: false, isWritable: true }, // ata
+                            { pubkey: ownerPubKey, isSigner: false, isWritable: false }, // owner
+                            { pubkey: mintPubKey, isSigner: false, isWritable: false }, // mint
+                            { pubkey: solanaWeb3.SystemProgram.programId, isSigner: false, isWritable: false }, // system program
+                            { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false }, // token program
+                            { pubkey: solanaWeb3.SYSVAR_RENT_PUBKEY, isSigner: false, isWritable: false }, // rent
+                        ],
+                        programId: SPL_ASSOCIATED_TOKEN_ACCOUNT_PROGRAM_ID,
+                        data: Buffer.from([]),
+                    });
+
+                    const transaction = new solanaWeb3.Transaction().add(createATAInstruction);
+                    
+                    // Get the latest blockhash
+                    const { blockhash } = await connection.getRecentBlockhash();
+                    transaction.recentBlockhash = blockhash;
+                    transaction.feePayer = selectedWallet.publicKey;
+
+                    // Sign and send transaction
+                    const signed = await selectedWallet.signTransaction(transaction);
+                    const signature = await connection.sendRawTransaction(signed.serialize());
+                    await connection.confirmTransaction(signature);
+                }
+
+                return associatedTokenAddress;
+            } catch (error) {
+                console.error('Error in getOrCreateAssociatedTokenAccount:', error);
+                throw error;
+            }
+        }
+
+        function updateTokenAmount() {
+            const amount = parseFloat(document.getElementById('amount').value);
+            const currency = document.getElementById('currency').value;
+            
+            if (!amount || amount <= 0) {
+                document.getElementById('tokenAmount').innerText = 'Tokens to receive: 0';
+                return;
+            }
+
+            let tokenAmount;
+            if (currency === 'USDT') {
+                tokenAmount = amount * 1000; // 0.001 USDT per token
+            } else {
+                tokenAmount = amount / 0.000005; // 0.000005 SOL per token
+            }
+
+            document.getElementById('tokenAmount').innerText = 
+                `Tokens to receive: ${tokenAmount.toLocaleString(undefined, {maximumFractionDigits: 2})}`;
+        }
+
+        async function getAssociatedTokenAddress(mint, owner) {
+            return await solanaWeb3.PublicKey.findProgramAddress(
+                [
+                    owner.toBuffer(),
+                    solanaWeb3.TOKEN_PROGRAM_ID.toBuffer(),
+                    mint.toBuffer(),
+                ],
+                solanaWeb3.ASSOCIATED_TOKEN_PROGRAM_ID
+            );
+        }
+
+        function validateAmount(amount, currency) {
+            if (currency === 'SOL') {
+                return amount >= 0.1 && amount <= 10; // 0.1 to 10 SOL
+            } else {
+                return amount >= 0.001 && amount <= 10000; // 0.001 to 10,000 USDT (minimum is 0.001 USDT)
+            }
+        }
+
+        async function updateProgressBar() {
+            const progressBar = document.getElementById('progress-bar');
+            const progressText = document.getElementById('progress-text');
+            const totalTokens = 100_000_000;
+
+            // Calculate percentage
+            const percentage = (totalTokensSold / totalTokens) * 100;
+            progressBar.style.width = `${percentage}%`;
+            progressText.innerText = `${totalTokensSold.toLocaleString()} / ${totalTokens.toLocaleString()} Tokens Sold`;
+
+            // Save to JSON file
+            await saveProgressToJSON();
+        }
+
+        async function saveProgressToJSON() {
+            const data = { totalTokensSold };
+            const response = await fetch('/save-progress', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(data),
+            });
+
+            if (!response.ok) {
+                console.error('Failed to save progress');
+            }
+        }
+    </script>
+</body>
+</html>
+
